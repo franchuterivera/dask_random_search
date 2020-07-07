@@ -29,6 +29,8 @@ def fit_and_score(id, model, configspace, X, y, cv):
     else:
         config['score'] = np.mean(cross_val_score(clf, X, y, cv=5))
     return config
+
+
 def sequential_random_search(model, configspace, budget, X, y, cv=False):
     data = []
     for b in range(budget):
@@ -50,6 +52,7 @@ def dask_random_search(model, configspace, budget, X, y, cv=False):
     data = c.gather(data)
     c.shutdown()
     return pd.DataFrame(data)
+
 
 if __name__== "__main__" :
     # Load the data: Australian dataset
