@@ -14,74 +14,100 @@ import sklearn.metrics
 from sklearn.ensemble import GradientBoostingClassifier
 from sklearn.model_selection import cross_val_score
 
+from dask.distributed import Client
 
+
+# Function to map reduce
+def fit_and_score(id, model, configspace, X, y, cv):
+    # Get a configuration to try
+    config = cs.sample_configuration().get_dictionary()
+    clf = model(**config)
+    if not cv:
+        X_train, X_val, y_train, y_val = sklearn.model_selection.train_test_split(X,y)
+        clf.fit(X_train, y_train)
+        config['score'] = clf.score(X_val, y_val)
+    else:
+        config['score'] = np.mean(cross_val_score(clf, X, y, cv=5))
+    return config
 def sequential_random_search(model, configspace, budget, X, y, cv=False):
     data = []
     for b in range(budget):
-        # Get a configuration to try
-        config = cs.sample_configuration().get_dictionary()
-        clf = model(**config)
-        if not cv:
-            X_train, X_val, y_train, y_val = sklearn.model_selection.train_test_split(X,y)
-            clf.fit(X_train, y_train)
-            config['score'] = clf.score(X_val, y_val)
-        else:
-            config['score'] = np.mean(cross_val_score(clf, X, y, cv=5))
+        config = fit_and_score(b, model, configspace, X, y, cv)
         data.append(config)
     return pd.DataFrame(data)
 
 
-# Load the data: Australian dataset
-X, y = sklearn.datasets.fetch_openml(data_id=40981, return_X_y=True)
-X_train, X_test, y_train, y_test = sklearn.model_selection.train_test_split(
-    X,
-    y,
-)
+def dask_random_search(model, configspace, budget, X, y, cv=False):
+    # Setup the cluster
+    c = Client(n_workers=4)
+    c.cluster
 
-# Define the model to use
-model = GradientBoostingClassifier
-parameters = {
-    "loss":["deviance"],
-    "learning_rate": [0.01, 0.025, 0.05, 0.075, 0.1, 0.15, 0.2],
-    "min_samples_split": np.linspace(0.1, 0.5, 12),
-    "min_samples_leaf": np.linspace(0.1, 0.5, 12),
-    "max_depth":[3,5,8],
-    "max_features":["log2","sqrt"],
-    "criterion": ["friedman_mse",  "mae"],
-    "subsample":[0.5, 0.618, 0.8, 0.85, 0.9, 0.95, 1.0],
-    "n_estimators":[10]
-    }
+    data = []
+    for b in range(budget):
+        data.append(
+            c.submit(fit_and_score, b, model, configspace, X, y, cv)
+        )
+    data = c.gather(data)
+    c.shutdown()
+    return pd.DataFrame(data)
 
-# Define the configuration space
-cs = CS.ConfigurationSpace()
-# learning rate shrinks the contribution of each tree by learning_rate
-learning_rate = CSH.UniformFloatHyperparameter('learning_rate', lower=0.01, upper=0.2, default_value=0.1, log=True)
-cs.add_hyperparameter(learning_rate)
-# The number of boosting stages to perform
-n_estimators = CSH.UniformIntegerHyperparameter('n_estimators', lower=10, upper=100, default_value=100)
-cs.add_hyperparameter(n_estimators)
-# The fraction of samples to be used for fitting the individual base learners.
-subsample = CSH.UniformFloatHyperparameter('subsample', lower=0.5, upper=1.0, default_value=1.0)
-cs.add_hyperparameter(subsample)
-# The function to measure the quality of a split
-criterion = CSH.CategoricalHyperparameter('criterion', ['friedman_mse', 'mae', 'mse'])
-cs.add_hyperparameter(criterion)
-# The minimum number of samples required to split an internal node
-min_samples_split = CSH.UniformIntegerHyperparameter('min_samples_split', lower=1, upper=12, default_value=2)
-cs.add_hyperparameter(min_samples_split)
-# The minimum number of samples required to be at a leaf node
-min_samples_leaf = CSH.UniformIntegerHyperparameter('min_samples_leaf', lower=1, upper=12, default_value=2)
-cs.add_hyperparameter(min_samples_leaf)
-# The maximum depth of the individual regression estimators.
-max_depth = CSH.UniformIntegerHyperparameter('max_depth', lower=3, upper=8, default_value=3)
-cs.add_hyperparameter(max_depth)
-# The number of features to consider when looking for the best split
-max_features = CSH.CategoricalHyperparameter('max_features', ['log2', 'sqrt'])
-cs.add_hyperparameter(max_features)
+if __name__== "__main__" :
+    # Load the data: Australian dataset
+    X, y = sklearn.datasets.fetch_openml(data_id=40981, return_X_y=True)
+    X_train, X_test, y_train, y_test = sklearn.model_selection.train_test_split(
+        X,
+        y,
+    )
 
-budget = 2
-start_time = time.time()
-results_frame = sequential_random_search(model=model, configspace=cs, budget=budget, X=X_train, y=y_train, cv=False)
-print(f"Elapsed time for sequential search = {time.time() - start_time}")
+    # Define the model to use
+    model = GradientBoostingClassifier
+    parameters = {
+        "loss":["deviance"],
+        "learning_rate": [0.01, 0.025, 0.05, 0.075, 0.1, 0.15, 0.2],
+        "min_samples_split": np.linspace(0.1, 0.5, 12),
+        "min_samples_leaf": np.linspace(0.1, 0.5, 12),
+        "max_depth":[3,5,8],
+        "max_features":["log2","sqrt"],
+        "criterion": ["friedman_mse",  "mae"],
+        "subsample":[0.5, 0.618, 0.8, 0.85, 0.9, 0.95, 1.0],
+        "n_estimators":[10]
+        }
 
-print(tabulate.tabulate(results_frame, headers='keys', tablefmt='psql'))
+    # Define the configuration space
+    cs = CS.ConfigurationSpace()
+    # learning rate shrinks the contribution of each tree by learning_rate
+    learning_rate = CSH.UniformFloatHyperparameter('learning_rate', lower=0.01, upper=0.2, default_value=0.1, log=True)
+    cs.add_hyperparameter(learning_rate)
+    # The number of boosting stages to perform
+    n_estimators = CSH.UniformIntegerHyperparameter('n_estimators', lower=10, upper=100, default_value=100)
+    cs.add_hyperparameter(n_estimators)
+    # The fraction of samples to be used for fitting the individual base learners.
+    subsample = CSH.UniformFloatHyperparameter('subsample', lower=0.5, upper=1.0, default_value=1.0)
+    cs.add_hyperparameter(subsample)
+    # The function to measure the quality of a split
+    criterion = CSH.CategoricalHyperparameter('criterion', ['friedman_mse', 'mae', 'mse'])
+    cs.add_hyperparameter(criterion)
+    # The minimum number of samples required to split an internal node
+    min_samples_split = CSH.UniformIntegerHyperparameter('min_samples_split', lower=2, upper=12, default_value=2)
+    cs.add_hyperparameter(min_samples_split)
+    # The minimum number of samples required to be at a leaf node
+    min_samples_leaf = CSH.UniformIntegerHyperparameter('min_samples_leaf', lower=1, upper=12, default_value=2)
+    cs.add_hyperparameter(min_samples_leaf)
+    # The maximum depth of the individual regression estimators.
+    max_depth = CSH.UniformIntegerHyperparameter('max_depth', lower=3, upper=8, default_value=3)
+    cs.add_hyperparameter(max_depth)
+    # The number of features to consider when looking for the best split
+    max_features = CSH.CategoricalHyperparameter('max_features', ['log2', 'sqrt'])
+    cs.add_hyperparameter(max_features)
+
+    budget = 60
+
+    start_time = time.time()
+    results_frame = sequential_random_search(model=model, configspace=cs, budget=budget, X=X_train, y=y_train, cv=True)
+    print(f"Elapsed time for sequential search = {time.time() - start_time}")
+    print(tabulate.tabulate(results_frame, headers='keys', tablefmt='psql'))
+
+    start_time = time.time()
+    results_frame = dask_random_search(model=model, configspace=cs, budget=budget, X=X_train, y=y_train, cv=True)
+    print(f"Elapsed time for dask search = {time.time() - start_time}")
+    print(tabulate.tabulate(results_frame, headers='keys', tablefmt='psql'))
