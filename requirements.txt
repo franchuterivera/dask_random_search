@@ -11,4 +11,3 @@
  scikit-image>=0.15.0
  dask-ml
  ConfigSpace
- tabulate

@@ -149,12 +149,8 @@ if __name__== "__main__" :
                 client.submit(fit_and_score, run_info)
             )
 
-            # If the cluster was not under full load, we check whether anything has completed
             # since the last iteration and immediately check if we need to submit more jobs
-            try:
-                done_futures = wait(futures, timeout=0, return_when='FIRST_COMPLETED').done
-            except:
-                done_futures = set()
+            done_futures = [f for f in futures if f.done()]
 
         else:
             # If the cluster is under full load, we simply wait until any future is completed and
