@@ -117,7 +117,7 @@ if __name__== "__main__" :
         # The nthreads dynamically query for the scheduler capacity
         # On a local cluster, capacity can be increased by scale()
         # On a distributed, dask-worker 'tcp://127.0.0.1:45739' --nprocs 1 --nthreads 1
-        total_compute_power = ray.available_resources()['CPU']
+        total_compute_power = ray.cluster_resources()['CPU']
         if len(obj_refs) < total_compute_power:
             now = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
             print(f"Scheduling job {counter} at {now}")
@@ -134,9 +134,17 @@ if __name__== "__main__" :
             # is not reliable because it takes a little bit of time to update the
             # database
 
+            # num_returns specify the number of objects to return, and based on the status
+            # they get returned either on completed or not completed accordingly
+            obj_refs_completed, obj_refs = ray.wait(obj_refs, num_returns=len(obj_refs), timeout=0)
+
         else:
             # If the cluster is under full load, we simply wait until any object is completed
             # then move on to the next iteration
+
+            # So in Ray, below wait awaits for infinite time until 1 job is returned. If 2
+            # jobs are finished, only 1 is returned. Above wait pops all finished objects
+            # We can also do a call to ray.wait with timeout zero, but next cycle will handle this
             obj_refs_completed, obj_refs = ray.wait(obj_refs, num_returns=1, timeout=None)
 
         for obj_ref in obj_refs_completed:
